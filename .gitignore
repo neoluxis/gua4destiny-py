@@ -8,3 +8,5 @@ conda/
 *pyc
 __pycache__/
 
+*.svg
+
