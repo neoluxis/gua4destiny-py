@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import random
 from abc import ABC, abstractmethod
-from typing import Dict, List, Type
+from typing import Any, Dict, List, Literal, Type, overload
 
 import numpy as np
 
 
 class DivisionStrategy(ABC):
     @abstractmethod
-    def divide(self, omni: int, parts: int, **kwargs) -> List[int]:
+    def divide(self, omni: int, parts: int, **kwargs: Any) -> List[int]:
         raise NotImplementedError
 
     @staticmethod
@@ -45,7 +45,7 @@ def division_method(key: str):
 
 @division_method("U")
 class UniformDivisionStrategy(DivisionStrategy):
-    def divide(self, omni: int, parts: int, **kwargs) -> List[int]:
+    def divide(self, omni: int, parts: int, **kwargs: Any) -> List[int]:
         self.validate(omni, parts)
         if kwargs:
             _raise_unknown_kwargs("U", kwargs)
@@ -62,7 +62,7 @@ class UniformDivisionStrategy(DivisionStrategy):
 
 @division_method("N")
 class NormalDivisionStrategy(DivisionStrategy):
-    def divide(self, omni: int, parts: int, **kwargs) -> List[int]:
+    def divide(self, omni: int, parts: int, **kwargs: Any) -> List[int]:
         self.validate(omni, parts)
         std_ratio = kwargs.pop("std_ratio", 0.5)
         mean = kwargs.pop("mean", omni / parts)
@@ -75,7 +75,7 @@ class NormalDivisionStrategy(DivisionStrategy):
 
 @division_method("E")
 class ExponentialDivisionStrategy(DivisionStrategy):
-    def divide(self, omni: int, parts: int, **kwargs) -> List[int]:
+    def divide(self, omni: int, parts: int, **kwargs: Any) -> List[int]:
         self.validate(omni, parts)
         scale = kwargs.pop("scale", omni / parts)
         if kwargs:
@@ -86,7 +86,7 @@ class ExponentialDivisionStrategy(DivisionStrategy):
 
 @division_method("P")
 class PoissonDivisionStrategy(DivisionStrategy):
-    def divide(self, omni: int, parts: int, **kwargs) -> List[int]:
+    def divide(self, omni: int, parts: int, **kwargs: Any) -> List[int]:
         self.validate(omni, parts)
         lam = kwargs.pop("lam", omni / parts)
         if kwargs:
@@ -106,8 +106,38 @@ class Divider:
     def register(self, key: str, strategy: DivisionStrategy) -> None:
         self._strategies[key] = strategy
 
-    def divide(self, omni: int, parts: int, method: str = "U", **kwargs) -> List[int]:
-        strategy = self._strategies.get(method)
+    @overload
+    def divide(self, omni: int, parts: int, method: Literal["U"] = "U") -> List[int]:
+        ...
+
+    @overload
+    def divide(
+        self,
+        omni: int,
+        parts: int,
+        method: Literal["N"],
+        *,
+        std_ratio: float = 0.5,
+        mean: float | None = None,
+        std_dev: float | None = None,
+    ) -> List[int]:
+        ...
+
+    @overload
+    def divide(self, omni: int, parts: int, method: Literal["E"], *, scale: float | None = None) -> List[int]:
+        ...
+
+    @overload
+    def divide(self, omni: int, parts: int, method: Literal["P"], *, lam: float | None = None) -> List[int]:
+        ...
+
+    @overload
+    def divide(self, omni: int, parts: int, method: str, **kwargs: Any) -> List[int]:
+        ...
+
+    def divide(self, omni: int, parts: int, method: str = "U", **kwargs: Any) -> List[int]:
+        normalized_method = method.strip().upper()
+        strategy = self._strategies.get(normalized_method)
         if strategy is None:
             raise ValueError(f"未知的分割方法: {method}")
         return strategy.divide(omni, parts, **kwargs)
@@ -128,6 +158,6 @@ def _normalize_to_total(values: np.ndarray, omni: int) -> List[int]:
     return divisions
 
 
-def _raise_unknown_kwargs(method: str, kwargs: dict) -> None:
+def _raise_unknown_kwargs(method: str, kwargs: Dict[str, Any]) -> None:
     unknown = ", ".join(sorted(kwargs.keys()))
     raise ValueError(f"分割方法 {method} 不支持参数: {unknown}")
