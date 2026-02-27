@@ -2,6 +2,7 @@ from .engine import YarrowStalkEngine
 from .gua_model import Gua
 from .gua_types import YaoType, YinYang, YinYangType
 from .division import Divider, DivisionStrategy, division_method
+from .visualize import GuaVisualizer
 
 __all__ = [
     "YarrowStalkEngine",
@@ -12,4 +13,5 @@ __all__ = [
     "Divider",
     "DivisionStrategy",
     "division_method",
+    "GuaVisualizer",
 ]
