@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: gua4destiny_web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    # 在开发时将当前目录挂载到容器中以便热重载
+    volumes:
+      - ./:/app:cached
+    command: uvicorn gua4destiny.fastapi.app:app --host 0.0.0.0 --port 8000 --reload
+
+# 生产提示：移除 volumes 并去掉 --reload，或使用一个专门的 prod compose 文件覆盖这些设置。
