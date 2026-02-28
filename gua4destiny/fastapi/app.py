@@ -6,6 +6,7 @@ from typing import Generator, List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -22,6 +23,15 @@ from .schemas import GuaInput, ResolveResponse, GenerateGuaInput, GuaResponse
 app = FastAPI(title="Gua4Destiny API", version="0.1.0")
 
 resolver = GuaResolver()
+
+
+# 挂载前端静态文件（若存在），提供一个简单的单页前端：/ui
+try:
+    base_webui = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "webui"))
+    if os.path.isdir(base_webui):
+        app.mount("/ui", StaticFiles(directory=base_webui, html=True), name="webui")
+except Exception:
+    pass
 
 
 def _parse_yaos(yaos: List[object]) -> List[YaoType]:
@@ -107,7 +117,7 @@ async def stream(request: Request, input: GuaInput):
 
 
 @app.post("/api/image")
-async def image(input: GuaInput, format: str = "png"):
+async def image(input: GenerateGuaInput, format: str = "png"):
     """返回当前卦的图片。
 
     参数 `format` 支持 `png`（默认）或 `svg`。当 `format=svg` 时直接返回 SVG 文本，
