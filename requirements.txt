@@ -6,3 +6,8 @@ openai
 numpy
 scipy
 
+
+
+fastapi
+uvicorn[standard]
+

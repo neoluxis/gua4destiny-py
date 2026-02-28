@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+.venv
+.git/
+.gitignore
+node_modules/
+dist/
+build/
+\.pytest_cache/
+/.cache
+*.sqlite3
