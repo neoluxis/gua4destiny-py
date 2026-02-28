@@ -13,7 +13,14 @@ _default_text_api: Optional[TextAPI] = None
 class Gua:
     """卦对象（值对象风格）"""
 
-    def __init__(self, yaos: List[YaoType]):
+    def __init__(self, yaos: List[YaoType] = None):
+        if yaos is None:
+            from .engine import YarrowStalkEngine
+            from . import Divider, DivisionStrategy
+            
+            engine = YarrowStalkEngine(divider=Divider(), divide_method="N")
+            yaos = engine.six_yaos()
+
         if len(yaos) != 6:
             raise ValueError("卦必须有六爻")
         self.yaos = yaos
@@ -42,10 +49,14 @@ class Gua:
     def get_binary_value(self) -> int:
         return int(self.binary, 2)
 
-    def get_full_text(self, *, text_api: Optional[TextAPI] = None, use_cache: bool = True) -> str:
+    def get_full_text(
+        self, *, text_api: Optional[TextAPI] = None, use_cache: bool = True
+    ) -> str:
         """获取当前卦象对应的《周易》全文。"""
         api = text_api or _get_default_text_api()
-        pinyin_ascii = self.gua_category.get("pinyin_ascii", {}).get(str(self.get_index()))
+        pinyin_ascii = self.gua_category.get("pinyin_ascii", {}).get(
+            str(self.get_index())
+        )
         return api.fetch_gua_fulltext(
             name=self.name,
             index=self.get_index(),
@@ -53,10 +64,14 @@ class Gua:
             use_cache=use_cache,
         )
 
-    def get_full_text_result(self, *, text_api: Optional[TextAPI] = None, use_cache: bool = True) -> FullTextResult:
+    def get_full_text_result(
+        self, *, text_api: Optional[TextAPI] = None, use_cache: bool = True
+    ) -> FullTextResult:
         """获取全文及来源元数据（URL、缓存命中等）。"""
         api = text_api or _get_default_text_api()
-        pinyin_ascii = self.gua_category.get("pinyin_ascii", {}).get(str(self.get_index()))
+        pinyin_ascii = self.gua_category.get("pinyin_ascii", {}).get(
+            str(self.get_index())
+        )
         return api.fetch_gua_fulltext_result(
             name=self.name,
             index=self.get_index(),
