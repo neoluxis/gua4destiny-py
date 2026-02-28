@@ -3,14 +3,14 @@ from __future__ import annotations
 import argparse
 
 try:
-    from gua4destiny.algo import TextAPI, text_source
+    from gua4destiny.algo import BaseTextFetcher, TextAPI, text_fetcher
 except ModuleNotFoundError:
     import sys
     from pathlib import Path
 
     project_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project_root))
-    from gua4destiny.algo import TextAPI, text_source
+    from gua4destiny.algo import BaseTextFetcher, TextAPI, text_fetcher
 
 
 def custom_headers() -> dict:
@@ -31,11 +31,15 @@ def prefer_ctext(name, index, pinyin_ascii):
     return []
 
 
-@text_source("demo_backup", priority=50)
-def demo_backup_source(name, index, pinyin_ascii):
-    if name:
-        return [("demo_wikisource_backup", f"https://zh.wikisource.org/wiki/周易/{name}")]
-    return []
+@text_fetcher("demo_backup", priority=50)
+class DemoBackupFetcher(BaseTextFetcher):
+    def build_endpoints(self, *, api, name, index, pinyin_ascii):
+        if name:
+            return [("demo_wikisource_backup", f"https://zh.wikisource.org/wiki/周易/{name}")]
+        return []
+
+    def extract(self, *, html, api, source_key, url, name, index, pinyin_ascii):
+        return html
 
 
 def run_demo() -> None:
@@ -47,7 +51,7 @@ def run_demo() -> None:
         backoff_provider=short_backoff,
     )
 
-    candidates = api._candidate_endpoints(name="乾", index=0, pinyin_ascii="qian")
+    candidates = api.candidate_endpoints(name="乾", index=0, pinyin_ascii="qian")
     source_keys = [source_key for source_key, _ in candidates]
     print("候选源:", source_keys)
     assert "ctext_zhs" in source_keys, "未找到 ctext_zhs 源"

@@ -1,17 +1,13 @@
-"""Text API with two fetchers rebuilt from test_wikition.py logic.
-
-Fetchers:
-1) wikisource: https://zh.wikisource.org/wiki/周易/{name}
-2) ctext_zhs: https://ctext.org/book-of-changes/{pinyin}/zhs
-"""
+"""Class-based text fetchers with priority fallback."""
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import random
 import re
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 from urllib.parse import unquote, urlparse
 
 import requests
@@ -35,47 +31,130 @@ class FullTextResult:
     source_key: str
 
 
-EndpointBuilder = Callable[[Optional[str], Optional[int], Optional[str]], list[tuple[str, str]]]
-HeadersProvider = Callable[[], dict]
-BackoffProvider = Callable[[int], float]
-CacheKeyBuilder = Callable[[Optional[str], Optional[int], Optional[str]], str]
-
-
 @dataclass
 class NamedTextSource:
     name: str
     priority: int
-    builder: EndpointBuilder
 
 
-_TEXT_SOURCE_REGISTRY: dict[str, NamedTextSource] = {}
+class BaseTextFetcher(ABC):
+    name: str = "base"
+    priority: int = 100
+
+    @abstractmethod
+    def build_endpoints(
+        self,
+        *,
+        api: "TextAPI",
+        name: Optional[str],
+        index: Optional[int],
+        pinyin_ascii: Optional[str],
+    ) -> list[tuple[str, str]]:
+        raise NotImplementedError
+
+    def fetch(self, *, session: requests.Session, url: str, headers: dict, timeout: float) -> str:
+        resp = session.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp.text
+
+    @abstractmethod
+    def extract(
+        self,
+        *,
+        html: str,
+        api: "TextAPI",
+        source_key: str,
+        url: str,
+        name: Optional[str],
+        index: Optional[int],
+        pinyin_ascii: Optional[str],
+    ) -> str:
+        raise NotImplementedError
+
+    def validate(self, text: str) -> bool:
+        return bool(text.strip())
 
 
-def text_source(name: str, priority: int = 100):
+_FETCHER_REGISTRY: dict[str, type[BaseTextFetcher]] = {}
+
+
+def text_fetcher(name: str, priority: int = 100):
     normalized = name.strip().lower()
 
-    def decorator(builder: EndpointBuilder) -> EndpointBuilder:
-        if normalized in _TEXT_SOURCE_REGISTRY:
+    def decorator(cls: type[BaseTextFetcher]) -> type[BaseTextFetcher]:
+        if not issubclass(cls, BaseTextFetcher):
+            raise TypeError("注册对象必须继承 BaseTextFetcher")
+        if normalized in _FETCHER_REGISTRY:
             raise ValueError(f"全文源已存在: {normalized}")
-        _TEXT_SOURCE_REGISTRY[normalized] = NamedTextSource(normalized, int(priority), builder)
-        return builder
+        cls.name = normalized
+        cls.priority = int(priority)
+        _FETCHER_REGISTRY[normalized] = cls
+        return cls
 
     return decorator
 
 
-@text_source("wikisource", priority=10)
-def _wikisource_source(name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> list[tuple[str, str]]:
-    if not name:
-        return []
-    ret = [("wikisource", f"https://zh.wikisource.org/wiki/周易/{name}")]
-    return ret
+@text_fetcher("wikisource", priority=10)
+class WikisourceFetcher(BaseTextFetcher):
+    def build_endpoints(
+        self,
+        *,
+        api: "TextAPI",
+        name: Optional[str],
+        index: Optional[int],
+        pinyin_ascii: Optional[str],
+    ) -> list[tuple[str, str]]:
+        if not name:
+            return []
+        endpoints = [("wikisource", f"https://zh.wikisource.org/wiki/周易/{name}")]
+        trad = api.to_traditional_name(name=name, pinyin_ascii=pinyin_ascii)
+        if trad != name:
+            endpoints.append(("wikisource_trad", f"https://zh.wikisource.org/wiki/周易/{trad}"))
+        return endpoints
+
+    def extract(
+        self,
+        *,
+        html: str,
+        api: "TextAPI",
+        source_key: str,
+        url: str,
+        name: Optional[str],
+        index: Optional[int],
+        pinyin_ascii: Optional[str],
+    ) -> str:
+        title_hints = _build_wikisource_title_hints(url, name or "")
+        return _extract_wikisource_text(html, title_hints)
 
 
-@text_source("ctext_zhs", priority=20)
-def _ctext_zhs_source(name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> list[tuple[str, str]]:
-    if not pinyin_ascii:
-        return []
-    return [("ctext_zhs", f"https://ctext.org/book-of-changes/{pinyin_ascii}/zhs")]
+@text_fetcher("ctext_zhs", priority=20)
+class CTextZHSFetcher(BaseTextFetcher):
+    def build_endpoints(
+        self,
+        *,
+        api: "TextAPI",
+        name: Optional[str],
+        index: Optional[int],
+        pinyin_ascii: Optional[str],
+    ) -> list[tuple[str, str]]:
+        pinyin = api.resolve_pinyin(name=name, index=index, pinyin_ascii=pinyin_ascii)
+        if not pinyin:
+            return []
+        return [("ctext_zhs", f"https://ctext.org/book-of-changes/{pinyin}/zhs")]
+
+    def extract(
+        self,
+        *,
+        html: str,
+        api: "TextAPI",
+        source_key: str,
+        url: str,
+        name: Optional[str],
+        index: Optional[int],
+        pinyin_ascii: Optional[str],
+    ) -> str:
+        pinyin = _extract_pinyin_from_ctext_url(url) or api.resolve_pinyin(name=name, index=index, pinyin_ascii=pinyin_ascii) or ""
+        return _extract_ctext_zhs_text(html, pinyin)
 
 
 class TextAPI:
@@ -88,9 +167,9 @@ class TextAPI:
         timeout: float = 15.0,
         user_agents: Optional[list[str]] = None,
         source_names: Optional[list[str]] = None,
-        headers_provider: Optional[HeadersProvider] = None,
-        backoff_provider: Optional[BackoffProvider] = None,
-        cache_key_builder: Optional[CacheKeyBuilder] = None,
+        headers_provider=None,
+        backoff_provider=None,
+        cache_key_builder=None,
     ) -> None:
         self.session = requests.Session()
         self.user_agents = user_agents or DEFAULT_UA_LIST
@@ -107,6 +186,23 @@ class TextAPI:
         root = cache_dir or Path.cwd() / ".cache" / "text_api"
         self.cache_dir = Path(root)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self._fetchers = self._build_fetchers()
+
+    def _build_fetchers(self) -> list[BaseTextFetcher]:
+        fetchers: list[BaseTextFetcher] = []
+        items = sorted(_FETCHER_REGISTRY.items(), key=lambda kv: kv[1].priority)
+        for name, cls in items:
+            if self._source_names is not None and name not in self._source_names:
+                continue
+            fetchers.append(cls())
+        return fetchers
+
+    def register_fetcher(self, fetcher: BaseTextFetcher, prepend: bool = False) -> None:
+        if prepend:
+            self._fetchers.insert(0, fetcher)
+        else:
+            self._fetchers.append(fetcher)
 
     def _choose_headers(self) -> dict:
         if self._headers_provider:
@@ -134,7 +230,7 @@ class TextAPI:
         safe = key.replace("/", "_")
         return self.cache_dir / f"{safe}.txt"
 
-    def _resolve_index(self, name: Optional[str], index: Optional[int]) -> Optional[int]:
+    def resolve_index(self, *, name: Optional[str], index: Optional[int]) -> Optional[int]:
         if index is not None:
             return index
         if not name:
@@ -144,37 +240,44 @@ class TextAPI:
                 return int(index_key)
         return None
 
-    def _resolve_pinyin(self, name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> Optional[str]:
+    def resolve_pinyin(self, *, name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> Optional[str]:
         if pinyin_ascii:
             return pinyin_ascii
-        idx = self._resolve_index(name, index)
+        idx = self.resolve_index(name=name, index=index)
         if idx is None:
             return None
         return self._gua_category.get("pinyin_ascii", {}).get(str(idx))
 
-    def _candidate_endpoints(self, *, name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> list[tuple[str, str]]:
-        resolved_pinyin = self._resolve_pinyin(name, index, pinyin_ascii)
-        sources = sorted(_TEXT_SOURCE_REGISTRY.values(), key=lambda s: s.priority)
+    def to_traditional_name(self, *, name: str, pinyin_ascii: Optional[str]) -> str:
+        mapping = self._gua_category.get("s2t_chars", {})
+        if not mapping:
+            return name
+        if pinyin_ascii and pinyin_ascii in mapping:
+            return mapping[pinyin_ascii]
+        return "".join(mapping.get(char, char) for char in name)
 
+    def candidate_endpoints(self, *, name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> list[tuple[str, str]]:
         endpoints: list[tuple[str, str]] = []
-        for source in sources:
-            if self._source_names is not None and source.name not in self._source_names:
-                continue
-            endpoints.extend(source.builder(name, index, resolved_pinyin))
-
-        if name:
-            trad_name = self._to_traditional_name(name, resolved_pinyin)
-            if trad_name != name:
-                endpoints.append(("wikisource_trad", f"https://zh.wikisource.org/wiki/周易/{trad_name}"))
-
         seen = set()
-        uniq: list[tuple[str, str]] = []
-        for source_key, url in endpoints:
-            if url in seen:
-                continue
-            seen.add(url)
-            uniq.append((source_key, url))
-        return uniq
+        for fetcher in self._fetchers:
+            built = fetcher.build_endpoints(api=self, name=name, index=index, pinyin_ascii=pinyin_ascii)
+            for source_key, url in built:
+                if url in seen:
+                    continue
+                seen.add(url)
+                endpoints.append((source_key, url))
+        return endpoints
+
+    def _candidate_jobs(self, *, name: Optional[str], index: Optional[int], pinyin_ascii: Optional[str]) -> list[tuple[BaseTextFetcher, str, str]]:
+        jobs: list[tuple[BaseTextFetcher, str, str]] = []
+        seen = set()
+        for fetcher in self._fetchers:
+            for source_key, url in fetcher.build_endpoints(api=self, name=name, index=index, pinyin_ascii=pinyin_ascii):
+                if url in seen:
+                    continue
+                seen.add(url)
+                jobs.append((fetcher, source_key, url))
+        return jobs
 
     def fetch_gua_fulltext_result(
         self,
@@ -185,7 +288,9 @@ class TextAPI:
         use_cache: bool = True,
     ) -> FullTextResult:
         resolved_name = name or (self._gua_category.get("names", {}).get(str(index)) if index is not None else None)
-        key = self._cache_key(resolved_name, index, pinyin_ascii)
+        resolved_pinyin = self.resolve_pinyin(name=resolved_name, index=index, pinyin_ascii=pinyin_ascii)
+
+        key = self._cache_key(resolved_name, index, resolved_pinyin)
         cache_file = self._cache_path(key)
 
         if use_cache and cache_file.exists():
@@ -199,19 +304,31 @@ class TextAPI:
             except Exception:
                 pass
 
-        candidates = self._candidate_endpoints(name=resolved_name, index=index, pinyin_ascii=pinyin_ascii)
-        if not candidates:
+        jobs = self._candidate_jobs(name=resolved_name, index=index, pinyin_ascii=resolved_pinyin)
+        if not jobs:
             raise ValueError("无法确定全文来源，请至少提供 name/index/pinyin_ascii 之一")
 
         last_exc: Optional[Exception] = None
-        for source_key, url in candidates:
+        for fetcher, source_key, url in jobs:
             for attempt in range(1, self.max_retries + 1):
                 try:
-                    resp = self.session.get(url, headers=self._choose_headers(), timeout=self.timeout)
-                    resp.raise_for_status()
-                    text = self._extract_by_source(source_key, resp.text, resolved_name or "", url)
-                    if not text.strip():
-                        raise RuntimeError("正文解析为空")
+                    html = fetcher.fetch(
+                        session=self.session,
+                        url=url,
+                        headers=self._choose_headers(),
+                        timeout=self.timeout,
+                    )
+                    text = fetcher.extract(
+                        html=html,
+                        api=self,
+                        source_key=source_key,
+                        url=url,
+                        name=resolved_name,
+                        index=index,
+                        pinyin_ascii=resolved_pinyin,
+                    )
+                    if not fetcher.validate(text):
+                        raise RuntimeError("正文校验失败")
 
                     try:
                         cache_file.write_text(text, encoding="utf-8")
@@ -224,7 +341,7 @@ class TextAPI:
                     last_exc = exc
                     time.sleep(self._backoff(attempt))
 
-        raise RuntimeError(f"无法获取全文，已尝试: {', '.join(url for _, url in candidates)}") from last_exc
+        raise RuntimeError(f"无法获取全文，已尝试: {', '.join(url for _, _, url in jobs)}") from last_exc
 
     def fetch_gua_fulltext(
         self,
@@ -240,23 +357,6 @@ class TextAPI:
             pinyin_ascii=pinyin_ascii,
             use_cache=use_cache,
         ).text
-
-    def _extract_by_source(self, source_key: str, html: str, title: str, url: str) -> str:
-        if source_key.startswith("wikisource"):
-            title_hints = _build_wikisource_title_hints(url, title)
-            return _extract_wikisource_text(html, title_hints)
-        if source_key == "ctext_zhs":
-            pinyin = _extract_pinyin_from_ctext_url(url)
-            return _extract_ctext_zhs_text(html, pinyin)
-        return _clean_text_block(BeautifulSoup(html, "html.parser").get_text())
-
-    def _to_traditional_name(self, name: str, pinyin_ascii: Optional[str]) -> str:
-        mapping = self._gua_category.get("s2t_chars", {})
-        if not mapping:
-            return name
-        if pinyin_ascii and pinyin_ascii in mapping:
-            return mapping[pinyin_ascii]
-        return "".join(mapping.get(char, char) for char in name)
 
 
 def _extract_wikisource_text(html: str, title_hints: list[str]) -> str:
@@ -381,5 +481,3 @@ def _clean_text_block(text: str) -> str:
         out.append(line)
         last_empty = False
     return "\n".join(out)
-
-
