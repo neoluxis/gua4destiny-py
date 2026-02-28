@@ -68,6 +68,7 @@ def run_demo() -> None:
 
     print("六爻:", [y.value for y in yaos])
     print("卦象:", gua)
+    print("Fulltext", gua.get_full_text())
 
 
 if __name__ == "__main__":
