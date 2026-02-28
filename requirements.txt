@@ -6,3 +6,9 @@ openai
 numpy
 scipy
 
+# ----
+fastapi
+python-dotenv
+uvicorn
+Pillow
+cairosvg
