@@ -32,3 +32,18 @@ class GuaResponse(BaseModel):
     binary: str
     value: int
     yaos: List[GuaYao]
+
+
+class HistoryCreate(BaseModel):
+    question: str
+    yaos: Optional[List[Union[str, int]]] = None
+    mode: str = "resolve"
+
+
+class HistoryRead(BaseModel):
+    id: int
+    question: str
+    yaos: Optional[List[Union[str, int]]] = None
+    response_text: Optional[str] = None
+    mode: str
+    created_at: str

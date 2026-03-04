@@ -18,11 +18,22 @@ from gua4destiny.algo.gua_resolver import GuaResolver, _extract_text_from_event,
 from gua4destiny.algo.gua_types import YaoType
 from gua4destiny.algo.visualize import GuaVisualizer
 from .schemas import GuaInput, ResolveResponse, GenerateGuaInput, GuaResponse
+from .schemas import HistoryRead
+from . import db as _db
+from sqlmodel import select
 
 
 app = FastAPI(title="Gua4Destiny API", version="0.1.0")
 
 resolver = GuaResolver()
+
+
+@app.on_event("startup")
+def on_startup():
+    try:
+        _db.init_db()
+    except Exception:
+        pass
 
 
 # 挂载前端静态文件（若存在），提供一个简单的单页前端：/ui
@@ -77,6 +88,25 @@ async def resolve(input: GuaInput):
     gua = Gua(yaos=yaos) if yaos is not None else Gua()
 
     text = resolver.resolve_gua(input.question, gua)
+    # 保存历史记录
+    try:
+        session = _db.get_session()
+        yaos_json = None
+        if input.yaos:
+            try:
+                import json as _json
+
+                yaos_json = _json.dumps(input.yaos, ensure_ascii=False)
+            except Exception:
+                yaos_json = None
+
+        hist = _db.History(question=input.question, yaos_json=yaos_json, response_text=text, mode="resolve")
+        session.add(hist)
+        session.commit()
+        session.refresh(hist)
+        session.close()
+    except Exception:
+        pass
     return ResolveResponse(text=text)
 
 
@@ -101,6 +131,22 @@ async def stream(request: Request, input: GuaInput):
             return False
 
     async def event_generator():
+        # 为流式请求先创建历史记录，随后在生成完成后更新
+        session = None
+        hist = None
+        try:
+            session = _db.get_session()
+            import json as _json
+
+            yaos_json = _json.dumps(input.yaos, ensure_ascii=False) if input.yaos else None
+            hist = _db.History(question=input.question, yaos_json=yaos_json, response_text="", mode="stream")
+            session.add(hist)
+            session.commit()
+            session.refresh(hist)
+        except Exception:
+            if session:
+                session.close()
+            session = None
         for piece in resolver.resolve_gua_stream(input.question, gua):
             # 当客户端断开连接时，停止生成
             if await await_client_disconnected():
@@ -112,6 +158,23 @@ async def stream(request: Request, input: GuaInput):
                 text = _extract_text_from_event(piece) or extract_response_text(piece) or str(piece)
             # SSE 格式：每个 event 用 data: 开头，空行结束
             yield f"data: {json.dumps({'text': text})}\n\n"
+
+        # 流结束后，更新历史记录的 response_text（若有 session）
+        try:
+            if session and hist:
+                # 聚合文本：这里简单地用 resolver 再跑一遍以确保完整文本，
+                # 或者也可以在循环中拼接 pieces 到变量并赋值；为简单起见读取 resolver.resolve_gua
+                final_text = resolver.resolve_gua(input.question, gua)
+                hist.response_text = final_text
+                session.add(hist)
+                session.commit()
+                session.close()
+        except Exception:
+            try:
+                if session:
+                    session.close()
+            except Exception:
+                pass
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -211,3 +274,74 @@ async def generate_gua(input: GenerateGuaInput):
         yaos_out.append({"name": y.name, "value": y.value})
 
     return GuaResponse(name=gua.name, binary=gua.binary, value=gua.value, yaos=yaos_out)
+
+
+@app.get("/api/history", response_model=List[HistoryRead])
+async def list_history(limit: int = 100):
+    session = _db.get_session()
+    try:
+        stmt = select(_db.History).order_by(_db.History.created_at.desc()).limit(limit)
+        results = session.exec(stmt).all()
+        out = []
+        import json as _json
+
+        for h in results:
+            yaos = None
+            try:
+                if h.yaos_json:
+                    yaos = _json.loads(h.yaos_json)
+            except Exception:
+                yaos = None
+            out.append(
+                HistoryRead(
+                    id=h.id,
+                    question=h.question,
+                    yaos=yaos,
+                    response_text=h.response_text,
+                    mode=h.mode,
+                    created_at=h.created_at.isoformat(),
+                )
+            )
+        return out
+    finally:
+        session.close()
+
+
+@app.get("/api/history/{history_id}", response_model=HistoryRead)
+async def get_history(history_id: int):
+    session = _db.get_session()
+    try:
+        h = session.get(_db.History, history_id)
+        if not h:
+            raise HTTPException(status_code=404, detail="历史记录未找到")
+        import json as _json
+
+        yaos = None
+        try:
+            if h.yaos_json:
+                yaos = _json.loads(h.yaos_json)
+        except Exception:
+            yaos = None
+        return HistoryRead(
+            id=h.id,
+            question=h.question,
+            yaos=yaos,
+            response_text=h.response_text,
+            mode=h.mode,
+            created_at=h.created_at.isoformat(),
+        )
+    finally:
+        session.close()
+
+
+@app.delete("/api/history")
+async def clear_history():
+    session = _db.get_session()
+    try:
+        session.exec(select(_db.History)).all()
+        # 简单清空表
+        session.exec("DELETE FROM history")
+        session.commit()
+        return {"ok": True}
+    finally:
+        session.close()

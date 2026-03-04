@@ -12,3 +12,4 @@ python-dotenv
 uvicorn
 Pillow
 cairosvg
+sqlmodel

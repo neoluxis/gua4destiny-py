@@ -11,3 +11,6 @@ __pycache__/
 *.svg
 
 .cache/
+
+# 数据库
+*.db
