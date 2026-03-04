@@ -14,8 +14,20 @@
       <img id="app-logo" src="logo.png" alt="logo" class="app-logo" />
       <div class="app-bar__title">卜之 — 今日运势</div>
     </div>
-    <button id="new" class="btn app-bar__new">新</button>
+    <div class="app-bar__actions">
+      <button id="history-toggle" class="btn app-bar__history">历史</button>
+      <button id="new" class="btn app-bar__new">新</button>
+    </div>
   </header>
+
+  <!-- 侧栏：历史记录 -->
+  <aside id="history-sidebar" class="history-sidebar" aria-hidden="true">
+    <div class="history-sidebar__header">
+      <div class="history-sidebar__title">历史记录</div>
+      <button id="history-close" class="btn">关闭</button>
+    </div>
+    <div id="history-list" class="history-list"></div>
+  </aside>
 
   <main class="container">
     <section class="card">

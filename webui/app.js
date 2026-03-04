@@ -9,6 +9,10 @@
   const guaName = $('gua-name');
   const guaImage = $('gua-image');
   const greetingEl = $('greeting');
+  const historyToggle = $('history-toggle');
+  const historySidebar = $('history-sidebar');
+  const historyClose = $('history-close');
+  const historyList = $('history-list');
 
   // 常见默认问题（用于随机填入 placeholder）
   const defaultQuestions = [
@@ -120,9 +124,10 @@
     }
   }
 
-  async function generateGua(question) {
-    // 先请求生成卦
-    const resp = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+  async function generateGua(question, yaos = null) {
+    // 先请求生成卦（可指定 yaos）
+    const body = yaos ? { yaos } : {};
+    const resp = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     if(!resp.ok) {
       const text = await resp.text();
       showToast('生成卦失败: ' + (text || resp.statusText), 'error');
@@ -131,6 +136,75 @@
     const data = await resp.json();
     return data;
   }
+
+  function escapeHtml(s){
+    if(!s) return '';
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"})[c]);
+  }
+
+  async function fetchHistory(limit = 100){
+    try{
+      const r = await fetch(`/api/history?limit=${limit}`);
+      if(!r.ok) throw new Error('请求历史失败');
+      return await r.json();
+    }catch(e){
+      showToast('无法获取历史: ' + (e.message || e), 'error');
+      return [];
+    }
+  }
+
+  function renderHistoryList(items){
+    if(!historyList) return;
+    historyList.innerHTML = '';
+    if(!items || items.length === 0){
+      const el = document.createElement('div'); el.className = 'history-item'; el.textContent = '暂无历史记录'; historyList.appendChild(el); return;
+    }
+    items.forEach(it => {
+      const el = document.createElement('div'); el.className = 'history-item';
+      const q = document.createElement('div'); q.className = 'q'; q.textContent = it.question || '—';
+      const m = document.createElement('div'); m.className = 'meta'; m.textContent = (new Date(it.created_at)).toLocaleString() + ' • ' + (it.mode || '');
+      el.appendChild(q); el.appendChild(m);
+      el.addEventListener('click', ()=> loadHistoryItem(it));
+      historyList.appendChild(el);
+    });
+  }
+
+  async function loadHistoryItem(item){
+    try{
+      setLoading(true);
+      clearAnalysis();
+      questionInput.value = item.question || '';
+      const yaos = item.yaos || null;
+      if(yaos && yaos.length){
+        // 生成卦信息（以便拿到名字等）并渲染图像
+        try{
+          const g = await generateGua('', yaos);
+          guaName.textContent = g.name || '——';
+        }catch(e){
+          guaName.textContent = '——';
+        }
+        await renderGuaImage(yaos);
+      }else{
+        const g = await generateGua(item.question || '');
+        guaName.textContent = g.name || '——';
+        await renderGuaImage(g.yaos.map(y=>y.value));
+      }
+      analysisEl.value = item.response_text || '';
+      // 关闭侧栏
+      closeHistorySidebar();
+    }catch(e){
+      showToast('加载历史失败: ' + (e.message || e), 'error');
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  function openHistorySidebar(){
+    if(historySidebar) historySidebar.classList.add('history-sidebar--open');
+    fetchHistory(100).then(renderHistoryList);
+  }
+
+  function closeHistorySidebar(){ if(historySidebar) historySidebar.classList.remove('history-sidebar--open'); }
 
   async function renderGuaImage(yaos) {
     // 请求 svg 并内联到页面，以保持清晰度
@@ -288,6 +362,11 @@
   });
 
   newBtn.addEventListener('click', onNew);
+
+  if(historyToggle) historyToggle.addEventListener('click', ()=>{
+    if(historySidebar && historySidebar.classList.contains('history-sidebar--open')) closeHistorySidebar(); else openHistorySidebar();
+  });
+  if(historyClose) historyClose.addEventListener('click', closeHistorySidebar);
 
   // 快捷：回车触发产生一卦
   questionInput.addEventListener('keydown', (ev) => {
