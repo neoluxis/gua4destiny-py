@@ -14,6 +14,16 @@
   const historyClose = $('history-close');
   const historyList = $('history-list');
 
+  // 与后端默认布局保持一致的可视化参数
+  const SVG_PARAMS = {
+    line_thickness: 100,
+    length: 1200,
+    split_gap: 200,
+    gap_between: 100,
+    margin: 200,
+    corner_radius: 50,
+  };
+
   // 常见默认问题（用于随机填入 placeholder）
   const defaultQuestions = [
     '今天运势如何？',
@@ -208,7 +218,8 @@
 
   async function renderGuaImage(yaos) {
     // 请求 svg 并内联到页面，以保持清晰度
-    const resp = await fetch('/api/image?format=svg', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({yaos})});
+    const body = Object.assign({ yaos }, SVG_PARAMS);
+    const resp = await fetch('/api/image?format=svg', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     if(!resp.ok) {
       const text = await resp.text();
       showToast('加载图片失败: ' + (text || resp.statusText), 'error');

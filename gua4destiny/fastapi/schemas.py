@@ -20,6 +20,15 @@ class GenerateGuaInput(BaseModel):
     yaos: Optional[List[Union[str, int]]] = Field(
         None, description="六爻列表（可选），支持枚举名或整数；为空则随机生成"
     )
+    # 可选的可视化布局参数（传入以覆盖后端默认布局）
+    line_thickness: Optional[int] = Field(None, description="横线高度（像素）")
+    length: Optional[int] = Field(None, description="横线总体长度（像素），不含两侧外边距")
+    split_gap: Optional[int] = Field(None, description="阴爻中断长度（像素）")
+    gap_between: Optional[int] = Field(None, description="爻之间的可见空隙（像素）")
+    margin: Optional[int] = Field(None, description="外围边距（像素）")
+    corner_radius: Optional[int] = Field(None, description="圆角半径（像素）")
+    width: Optional[int] = Field(None, description="画布宽度（像素），优先于 length+margin")
+    height: Optional[int] = Field(None, description="画布高度（像素），可覆盖计算高度")
 
 
 class GuaYao(BaseModel):

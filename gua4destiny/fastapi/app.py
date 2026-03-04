@@ -194,11 +194,27 @@ async def image(input: GenerateGuaInput, format: str = "png"):
     gua = Gua(yaos=yaos) if yaos is not None else Gua()
 
     # 优先生成 SVG（可直接返回或用于 PNG 转换）
+    # 优先使用请求体中提供的布局参数（若有），否则使用后端默认值
+    svg_params = {}
+    if input.line_thickness is not None:
+        svg_params["line_thickness"] = input.line_thickness
+    if input.length is not None:
+        svg_params["length"] = input.length
+    if input.split_gap is not None:
+        svg_params["split_gap"] = input.split_gap
+    if input.gap_between is not None:
+        svg_params["gap_between"] = input.gap_between
+    if input.margin is not None:
+        svg_params["margin"] = input.margin
+    if input.corner_radius is not None:
+        svg_params["corner_radius"] = input.corner_radius
+    if input.width is not None:
+        svg_params["width"] = input.width
+    if input.height is not None:
+        svg_params["height"] = input.height
+
     try:
-        # 使用与可视化器一致的默认尺寸（宽:800，高:360），以保证 SVG->PNG 比例一致
-        svg = GuaVisualizer.to_svg(
-            gua, width=800, height=360, line_thickness=16, line_spacing=44, margin=24, split_gap=28
-        )
+        svg = GuaVisualizer.to_svg(gua, **svg_params)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成 SVG 失败: {e}")
 
@@ -209,50 +225,13 @@ async def image(input: GenerateGuaInput, format: str = "png"):
     # 如果请求 SVG，直接返回
     if fmt == "svg":
         return Response(content=svg, media_type="image/svg+xml")
-
+    # 直接使用可视化器提供的统一 PNG 生成逻辑，以保证 SVG 与 PNG 表现一致
     try:
-        import cairosvg
-
-        png_bytes = cairosvg.svg2png(bytestring=svg.encode("utf-8"))
+        png_bytes = GuaVisualizer.to_png_bytes(gua, **svg_params)
         return Response(content=png_bytes, media_type="image/png")
-    except Exception:
-        # 回退到 Pillow 简单渲染（仍然可用）
-        if Image is None:
-            raise HTTPException(status_code=500, detail="无法生成图片：缺少 cairosvg 与 Pillow")
-
-        # Pillow 回退：按 GuaVisualizer 相同布局绘制，保证尺寸一致
-        width, height = 800, 360
-        margin = 24
-        line_thickness = 16
-        line_spacing = 44
-
-        img = Image.new("RGBA", (width, height), (255, 255, 255, 255))
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("DejaVuSans.ttf", 20)
-        except Exception:
-            font = ImageFont.load_default()
-
-        text = f"{gua.name} ({gua.binary})"
-        text_y = margin // 2 + 8
-        draw.text((width // 2 - 10 * len(text) // 2, text_y), text, fill=(0, 0, 0), font=font)
-
-        # 绘制六爻（与 SVG 相同，从下到上）
-        y_positions = [height - margin - i * line_spacing for i in range(6)]
-        for index, bit in enumerate(gua.binary):
-            # visualizer uses index order 0..5 mapping to y_positions[0]..; keep same
-            y = y_positions[index] - line_thickness // 2
-            if bit == "1":
-                draw.rectangle((margin, y, width - margin, y + line_thickness), fill=(0, 0, 0))
-            else:
-                half_width = (width - 2 * margin - 28) // 2
-                draw.rectangle((margin, y, margin + half_width, y + line_thickness), fill=(0, 0, 0))
-                draw.rectangle((margin + half_width + 28, y, margin + half_width + 28 + half_width, y + line_thickness), fill=(0, 0, 0))
-
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
+    except Exception as e:
+        # 若 Pillow 缺失或生成失败，返回 500
+        raise HTTPException(status_code=500, detail=f"生成 PNG 失败: {e}")
 
 
 @app.post("/api/generate", response_model=GuaResponse)
