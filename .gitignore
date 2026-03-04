@@ -9,6 +9,7 @@ conda/
 __pycache__/
 
 *.svg
+*.png
 
 .cache/
 
