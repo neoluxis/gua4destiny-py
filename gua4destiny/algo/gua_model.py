@@ -31,10 +31,21 @@ class Gua:
         self.name = self.get_name()
 
     def get_index(self) -> int:
-        index = self.gua_category["index"].get(str(self.value))
-        if index is None:
-            raise ValueError(f"未找到二进制数 {self.value} 对应的索引")
-        return index
+        # 仅使用新的 `values` 映射（index -> binary），通过反向查找得到索引
+        cat = self.gua_category
+        vals = cat.get("values")
+        if not vals:
+            raise ValueError("gua_category 中缺少 'values' 映射，无法解析索引")
+
+        for key, val in vals.items():
+            try:
+                if int(val) == int(self.value):
+                    return int(key)
+            except Exception:
+                if str(val) == str(self.value):
+                    return int(key)
+
+        raise ValueError(f"未在 gua_category 的 values 中找到二进制数 {self.value} 对应的索引")
 
     def get_name(self) -> str:
         index = self.get_index()
