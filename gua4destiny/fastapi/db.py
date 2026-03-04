@@ -17,7 +17,10 @@ class History(SQLModel, table=True):
     yaos_json: Optional[str] = None
     response_text: Optional[str] = None
     mode: str = "resolve"
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    # 使用本地时区的时间（带时区信息），便于前端按本地时间显示
+    created_at: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).astimezone()
+    )
 
 
 def init_db() -> None:

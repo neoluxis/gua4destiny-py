@@ -18,7 +18,7 @@ from gua4destiny.algo.gua_resolver import GuaResolver, _extract_text_from_event,
 from gua4destiny.algo.gua_types import YaoType
 from gua4destiny.algo.visualize import GuaVisualizer
 from .schemas import GuaInput, ResolveResponse, GenerateGuaInput, GuaResponse
-from .schemas import HistoryRead
+from .schemas import HistoryRead, HistoryUpdate
 from . import db as _db
 from sqlmodel import select
 
@@ -301,6 +301,60 @@ async def get_history(history_id: int):
                 yaos = _json.loads(h.yaos_json)
         except Exception:
             yaos = None
+        return HistoryRead(
+            id=h.id,
+            question=h.question,
+            yaos=yaos,
+            response_text=h.response_text,
+            mode=h.mode,
+            created_at=h.created_at.isoformat(),
+        )
+    finally:
+        session.close()
+
+
+@app.delete("/api/history/{history_id}")
+async def delete_history_item(history_id: int):
+    session = _db.get_session()
+    try:
+        h = session.get(_db.History, history_id)
+        if not h:
+            raise HTTPException(status_code=404, detail="历史记录未找到")
+        session.delete(h)
+        session.commit()
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.patch("/api/history/{history_id}", response_model=HistoryRead)
+async def update_history(history_id: int, update: HistoryUpdate):
+    session = _db.get_session()
+    try:
+        h = session.get(_db.History, history_id)
+        if not h:
+            raise HTTPException(status_code=404, detail="历史记录未找到")
+        import json as _json
+
+        if update.question is not None:
+            h.question = update.question
+        if update.yaos is not None:
+            try:
+                h.yaos_json = _json.dumps(update.yaos, ensure_ascii=False)
+            except Exception:
+                h.yaos_json = None
+
+        session.add(h)
+        session.commit()
+        session.refresh(h)
+
+        yaos = None
+        try:
+            if h.yaos_json:
+                yaos = _json.loads(h.yaos_json)
+        except Exception:
+            yaos = None
+
         return HistoryRead(
             id=h.id,
             question=h.question,

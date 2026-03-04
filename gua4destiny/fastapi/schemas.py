@@ -56,3 +56,8 @@ class HistoryRead(BaseModel):
     response_text: Optional[str] = None
     mode: str
     created_at: str
+
+
+class HistoryUpdate(BaseModel):
+    question: Optional[str] = Field(None, description="更新后的问题文本")
+    yaos: Optional[List[Union[str, int]]] = Field(None, description="可选的六爻列表以更新历史条目")

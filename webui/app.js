@@ -14,7 +14,6 @@
   const historyClose = $('history-close');
   const historyList = $('history-list');
 
-  // 与后端默认布局保持一致的可视化参数
   const SVG_PARAMS = {
     line_thickness: 100,
     length: 1200,
@@ -170,11 +169,97 @@
       const el = document.createElement('div'); el.className = 'history-item'; el.textContent = '暂无历史记录'; historyList.appendChild(el); return;
     }
     items.forEach(it => {
-      const el = document.createElement('div'); el.className = 'history-item';
-      const q = document.createElement('div'); q.className = 'q'; q.textContent = it.question || '—';
+      const el = document.createElement('div'); el.className = 'history-item'; el.style.position = 'relative';
+      const row = document.createElement('div'); row.className = 'history-item__row';
+      const left = document.createElement('div');
+      let q = document.createElement('div'); q.className = 'history-item__title'; q.textContent = it.question || '—';
       const m = document.createElement('div'); m.className = 'meta'; m.textContent = (new Date(it.created_at)).toLocaleString() + ' • ' + (it.mode || '');
-      el.appendChild(q); el.appendChild(m);
-      el.addEventListener('click', ()=> loadHistoryItem(it));
+      left.appendChild(q); left.appendChild(m);
+
+      const menuBtn = document.createElement('button'); menuBtn.className = 'history-item__menu'; menuBtn.innerHTML = '⋯';
+      // popup
+      const pop = document.createElement('div'); pop.className = 'history-item__actions-pop';
+      const renameBtn = document.createElement('button'); renameBtn.textContent = '重命名';
+      const delBtn = document.createElement('button'); delBtn.textContent = '删除'; delBtn.className = 'btn--danger';
+      pop.appendChild(renameBtn); pop.appendChild(delBtn);
+
+      row.appendChild(left); row.appendChild(menuBtn);
+      el.appendChild(row);
+      el.appendChild(pop);
+
+      // 点击主区域加载历史
+      left.addEventListener('click', (e)=> { e.stopPropagation(); loadHistoryItem(it); });
+
+      // 菜单打开/关闭
+      menuBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        // 关闭其他打开的
+        document.querySelectorAll('.history-item--menu-open').forEach(x=> x.classList.remove('history-item--menu-open'));
+        el.classList.toggle('history-item--menu-open');
+      });
+
+      // 重命名：内联编辑，Replace title with input
+      renameBtn.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        // 如果已经在编辑中，则不重复创建
+        if (el.querySelector('.history-item__input')) return;
+
+        const oldText = q.textContent || '';
+        const input = document.createElement('input');
+        input.className = 'history-item__input';
+        input.value = oldText;
+        input.style.width = '100%';
+        input.style.boxSizing = 'border-box';
+
+        // replace q with input
+        left.replaceChild(input, q);
+        input.focus();
+        input.select();
+
+        const finish = async (save) => {
+          if (save) {
+            const newQ = input.value.trim() || oldText;
+            try {
+              const r = await fetch(`/api/history/${it.id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:newQ})});
+              if(!r.ok) throw new Error(await r.text());
+              // update title element
+              q = document.createElement('div'); q.className = 'history-item__title'; q.textContent = newQ;
+              left.replaceChild(q, input);
+              showToast('重命名成功', 'info', 1200);
+              fetchHistory(100).then(renderHistoryList);
+              return;
+            } catch (e) {
+              showToast('重命名失败: ' + (e.message||e), 'error');
+              // fallthrough to restore
+            }
+          }
+          // cancel or failed: restore old title
+          q = document.createElement('div'); q.className = 'history-item__title'; q.textContent = oldText;
+          left.replaceChild(q, input);
+        };
+
+        input.addEventListener('keydown', (ke) => {
+          if (ke.key === 'Enter') {
+            finish(true);
+          } else if (ke.key === 'Escape') {
+            finish(false);
+          }
+        });
+        input.addEventListener('blur', () => { finish(true); });
+      });
+
+      // 删除
+      delBtn.addEventListener('click', async (ev)=>{
+        ev.stopPropagation();
+        if(!confirm('确认删除此条历史？')) return;
+        try{
+          const r = await fetch(`/api/history/${it.id}`, {method:'DELETE'});
+          if(!r.ok) throw new Error(await r.text());
+          showToast('删除成功', 'info', 1200);
+          fetchHistory(100).then(renderHistoryList);
+        }catch(e){ showToast('删除失败: ' + (e.message||e), 'error'); }
+      });
+
       historyList.appendChild(el);
     });
   }
